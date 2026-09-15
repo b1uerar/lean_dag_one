@@ -1,0 +1,8 @@
+name = "online_proof_example"
+version = "0.1.0"
+
+[leanOptions]
+experimental.module = true
+
+[[lean_lib]]
+name = "Online"

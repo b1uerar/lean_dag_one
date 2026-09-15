@@ -1,0 +1,8 @@
+name = "dag_fixture"
+version = "0.1.0"
+
+[leanOptions]
+experimental.module = true
+
+[[lean_lib]]
+name = "Fixture"

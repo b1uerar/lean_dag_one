@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title><!--ROOT_NAME--> | Lean DAG</title>
+<style>
+* { box-sizing: border-box; letter-spacing: 0; }
+body { margin: 0; color: #18181b; background: #fff; font: 14px system-ui, sans-serif; }
+header { padding: 18px 24px; border-bottom: 1px solid #e4e4e7; }
+.brand { color: #0f766e; font-size: 12px; font-weight: 700; }
+h1 { font-size: 21px; margin: 5px 0; overflow-wrap: anywhere; }
+#summary { margin: 0; color: #71717a; font-size: 13px; }
+.toolbar { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; padding: 12px 24px; border-bottom: 1px solid #e4e4e7; }
+label { display: flex; gap: 8px; align-items: center; }
+input, select { font: inherit; min-height: 32px; border: 1px solid #d4d4d8; border-radius: 4px; padding: 4px 8px; background: white; min-width: 0; }
+input[type=search] { width: 220px; max-width: 100%; }
+input[type=range] { width: 105px; padding: 0; accent-color: #0f766e; }
+input[type=checkbox] { min-height: auto; accent-color: #0f766e; }
+.exports { display: flex; gap: 14px; margin-left: auto; }
+a { color: #0f766e; }
+main { display: grid; grid-template-columns: minmax(0, 1fr) 330px; }
+#viewport { overflow: auto; height: calc(100dvh - 200px); min-height: 330px; background: #fafafa; }
+#viewport svg { display: block; min-width: 0; }
+.node { cursor: pointer; }
+.node:focus { outline: none; }
+.node:focus rect, .node.selected rect { stroke: #18181b; stroke-width: 3; }
+.node.muted, .edge.muted { opacity: .12; }
+aside { padding: 20px; border-left: 1px solid #e4e4e7; overflow: auto; max-height: calc(100dvh - 200px); }
+h2 { margin: 0 0 10px; font-size: 16px; overflow-wrap: anywhere; }
+dl { margin: 14px 0; }
+dt { color: #71717a; margin-top: 12px; font-size: 12px; }
+dd { margin: 4px 0 0; overflow-wrap: anywhere; }
+pre { margin: 16px 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
+#dependencies { padding-left: 18px; line-height: 1.8; overflow-wrap: anywhere; }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; padding: 10px 24px; font-size: 12px; border-top: 1px solid #e4e4e7; color: #52525b; }
+.legend span::before { content: ''; display: inline-block; width: 8px; height: 8px; background: var(--color); margin-right: 6px; }
+@media (max-width: 760px) {
+  header, .toolbar { padding: 12px 16px; }
+  .toolbar { gap: 10px; }
+  .toolbar > label:first-child { width: 100%; }
+  input[type=search] { flex: 1; width: auto; }
+  .exports { margin-left: 0; }
+  main { grid-template-columns: minmax(0, 1fr); }
+  #viewport { height: 52dvh; min-height: 280px; }
+  aside { max-height: none; border-left: 0; border-top: 1px solid #e4e4e7; padding: 16px; }
+  .legend { padding: 12px 16px; }
+}
+</style>
+</head>
+<body>
+<header><div class="brand">LEAN DAG / 4.26.0</div><h1><!--ROOT_NAME--></h1><p id="summary"></p></header>
+<div class="toolbar">
+  <label>Find <input id="search" type="search" aria-label="Find theorem" list="node-options" autocomplete="off"></label>
+  <datalist id="node-options"></datalist>
+  <label>Zoom <input id="zoom" type="range" min="10" max="180" value="100"><output id="zoom-value">100%</output></label>
+  <label><input id="sorry-paths" type="checkbox"> Sorry paths</label>
+  <nav class="exports"><a id="export-json" download="graph.json">JSON</a><a id="export-svg" download="graph.svg">SVG</a><a href="graph.dot" download>DOT</a></nav>
+</div>
+<main>
+  <div id="viewport"><!--GRAPH--></div>
+  <aside aria-label="Theorem details">
+    <h2 id="node-name"></h2><div id="node-status"></div>
+    <pre id="statement"></pre>
+    <dl><dt>Module</dt><dd id="module"></dd><dt>Source</dt><dd id="source"></dd><dt>Sorry in statement</dt><dd id="statement-sorry"></dd><dt>Sorry in proof</dt><dd id="proof-sorry"></dd></dl>
+    <h2>Dependencies</h2><ul id="dependencies"></ul>
+  </aside>
+</main>
+<footer class="legend">
+  <span style="--color:#be123c">Contains sorry</span><span style="--color:#a16207">Depends on sorry</span>
+  <span style="--color:#0f766e">Sorry-free</span><span style="--color:#52525b">Axiom</span>
+</footer>
+<script>
+const graph = /*GRAPH_DATA*/null;
+const nodes = new Map(graph.nodes.map(n => [n.id, n]));
+const $ = id => document.getElementById(id);
+const svg = document.querySelector('#viewport svg');
+const groups = [...svg.querySelectorAll('.node')];
+const edges = [...svg.querySelectorAll('.edge')];
+const statuses = {sorry:'Contains sorry', depends_on_sorry:'Depends on sorry', complete:'Sorry-free', axiom:'Axiom'};
+const colors = {sorry:'#be123c', depends_on_sorry:'#a16207', complete:'#0f766e', axiom:'#52525b'};
+let selected = graph.root;
+$('summary').textContent = `${graph.summary.nodes} nodes / ${graph.summary.edges} edges / ${graph.summary.contains_sorry} contain sorry`;
+for (const n of graph.nodes) {
+  const option = document.createElement('option'); option.value = n.name; $('node-options').append(option);
+}
+function select(id, scroll = false) {
+  const node = nodes.get(id);
+  if (!node) return;
+  selected = id;
+  for (const group of groups) group.classList.toggle('selected', group.dataset.id === id);
+  $('node-name').textContent = node.name;
+  $('node-status').textContent = statuses[node.status]; $('node-status').style.color = colors[node.status];
+  $('statement').textContent = node.statement;
+  $('module').textContent = node.module;
+  $('source').textContent = (node.file || 'Unavailable') + (node.location ? `:${node.location.line}:${node.location.column + 1}` : '');
+  $('statement-sorry').textContent = node.statement_sorry ? 'Yes' : 'No';
+  $('proof-sorry').textContent = node.proof_sorry ? 'Yes' : 'No';
+  $('dependencies').replaceChildren();
+  const dependencies = [...new Set([...node.statement_dependencies, ...node.proof_dependencies])].sort();
+  for (const dependency of dependencies) {
+    const li = document.createElement('li'), link = document.createElement('a');
+    link.href = '#'; link.textContent = nodes.get(dependency).name;
+    link.onclick = e => { e.preventDefault(); select(dependency, true); };
+    li.append(link); $('dependencies').append(li);
+  }
+  if (!dependencies.length) { const li = document.createElement('li'); li.textContent = 'None'; $('dependencies').append(li); }
+  if (scroll) {
+    const group = groups.find(g => g.dataset.id === id);
+    const box = group.getBoundingClientRect(), viewport = $('viewport'), bounds = viewport.getBoundingClientRect();
+    viewport.scrollTo({left: viewport.scrollLeft + box.x - bounds.x - (bounds.width - box.width)/2,
+                       top: viewport.scrollTop + box.y - bounds.y - (bounds.height - box.height)/2, behavior:'smooth'});
+  }
+}
+function filter() {
+  const query = $('search').value.toLowerCase();
+  const sorryOnly = $('sorry-paths').checked;
+  const visible = new Set(graph.nodes.filter(n =>
+    n.name.toLowerCase().includes(query) && (!sorryOnly || !n.sorry_free)).map(n => n.id));
+  for (const group of groups) group.classList.toggle('muted', !visible.has(group.dataset.id));
+  for (const edge of edges) edge.classList.toggle('muted', !visible.has(edge.dataset.source) || !visible.has(edge.dataset.target));
+}
+for (const group of groups) {
+  group.onclick = () => select(group.dataset.id);
+  group.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') {e.preventDefault(); select(group.dataset.id);} };
+}
+$('search').oninput = filter;
+$('search').onchange = () => { const n = graph.nodes.find(n => n.name === $('search').value); if(n) select(n.id, true); };
+$('sorry-paths').onchange = filter;
+const base = svg.viewBox.baseVal;
+function zoom() {
+  const scale = Number($('zoom').value) / 100;
+  svg.style.width = `${base.width * scale}px`; svg.style.height = `${base.height * scale}px`;
+  $('zoom-value').textContent = `${$('zoom').value}%`;
+}
+$('zoom').oninput = zoom;
+$('zoom').value = Math.max(80, Math.min(100, Math.floor($('viewport').clientWidth / base.width * 100)));
+zoom(); select(graph.root);
+$('export-json').href = URL.createObjectURL(new Blob([JSON.stringify(graph, null, 2)], {type:'application/json'}));
+const exported = svg.cloneNode(true);
+exported.removeAttribute('style');
+for (const item of exported.querySelectorAll('[class]')) item.classList.remove('selected', 'muted');
+$('export-svg').href = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(exported)], {type:'image/svg+xml'}));
+</script>
+</body>
+</html>
