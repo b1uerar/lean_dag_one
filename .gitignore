@@ -1,5 +1,8 @@
 __pycache__/
 .lake/
-output/
+output/*
+!output/bitvec_ctz/
+output/bitvec_ctz/*
+!output/bitvec_ctz/full.svg
 *.olean
 *.ilean
