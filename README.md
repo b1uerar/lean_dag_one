@@ -57,6 +57,11 @@ all reachable theorem dependencies within the file.
 - An edge `A -> B` means `B` uses `A`. Statement-only edges are dashed.
 - Nodes represent theorems declared in the input file. Imported declarations and
   local `have` bindings are excluded.
+- Automatically generated declarations without standalone source ranges, such as
+  structure projections, constructor injectivity theorems, and internal proof
+  helpers, are traversed without becoming nodes. Their local theorem dependencies
+  and `sorry` uses still contribute to the graph. They cannot be selected as
+  theorem targets because they have no standalone source proof to edit.
 - Red means the theorem contains `sorry`, including through local definitions or
   internal helpers. Amber means it depends on a theorem containing `sorry`.
   Green means neither applies within the input file.

@@ -15,9 +15,12 @@ def isTheorem (info : ConstantInfo) : Bool :=
   | .thmInfo _ => true
   | _ => false
 
--- Compiler-generated proof helpers belong to their enclosing declaration.
-def isNode (info : ConstantInfo) : Bool :=
-  isTheorem info && !(privateToUserName info.name).isInternalDetail
+-- Generated helpers and projections have no standalone theorem source.
+-- Source ranges are checked while visiting dependencies so every emitted node
+-- can be edited independently.
+def isNode (ctx : Context) (info : ConstantInfo) : Bool :=
+  isTheorem info && !(privateToUserName info.name).isInternalDetail &&
+    !(ctx.env.isProjectionFn info.name)
 
 structure Uses where
   visited : NameSet := {}
@@ -38,7 +41,7 @@ partial def stripSorryLabels (expr : Expr) : Expr :=
 def usedConstants (expr : Expr) : Array Name :=
   (stripSorryLabels expr).getUsedConstants
 
-partial def visit (ctx : Context) (root name : Name) : StateM Uses Unit := do
+partial def visit (ctx : Context) (root name : Name) : StateT Uses CoreM Unit := do
   if (← get).visited.contains name then return
   modify fun s => { s with visited := s.visited.insert name }
   if name == ``sorryAx then
@@ -49,61 +52,72 @@ partial def visit (ctx : Context) (root name : Name) : StateM Uses Unit := do
   let some info := ctx.find? name | do
     modify fun s => { s with missing := s.missing.insert name }
     return
-  if name != root && isNode info then
-    modify fun s => { s with nodes := s.nodes.insert name }
-    return
+  if name != root && isNode ctx info then
+    if (← findDeclarationRanges? name).isSome then
+      modify fun s => { s with nodes := s.nodes.insert name }
+      return
   for c in usedConstants info.type do visit ctx root c
   if let some value := info.value? (allowOpaque := true) then
     for c in usedConstants value do visit ctx root c
   if let .inductInfo value := info then
     for c in value.ctors do visit ctx root c
 
-def collect (ctx : Context) (root : Name) (expr : Expr) : Uses := Id.run do
+def collect (ctx : Context) (root : Name) (expr : Expr) : CoreM Uses := do
   let mut state : Uses := { visited := ({} : NameSet).insert root }
   for c in usedConstants expr do
-    state := (visit ctx root c).run state |>.2
+    state := (← (visit ctx root c).run state).2
   return state
 
 def namesJson (names : NameSet) : Json :=
   toJson (names.toArray.map Name.toString |>.qsort (· < ·))
 
 def resolveTarget (ctx : Context) (requested : String) : IO Name := do
+  let projectionError := IO.userError s!"'{requested}' matches an automatically generated structure/class projection, which has no standalone theorem proof to edit. Select a theorem that uses it."
   let exact := requested.toName
   if let some info := ctx.env.checked.get.find? exact then
-    if isTheorem info && !(ctx.env.isImportedConst exact) then return exact
+    if !(ctx.env.isImportedConst exact) then
+      if ctx.env.isProjectionFn exact then throw projectionError
+      if isNode ctx info then return exact
   let candidates := ctx.env.checked.get.constants.fold (init := #[]) fun acc name info =>
     let visible := (privateToUserName name).toString
     if isTheorem info && !(ctx.env.isImportedConst name) &&
         (visible == requested || visible.endsWith ("." ++ requested)) then
       acc.push name
     else acc
-  match candidates.toList with
+  let nodes := candidates.filter fun name => (ctx.find? name).any (isNode ctx)
+  match nodes.toList with
   | [name] => return name
-  | [] => throw <| IO.userError s!"Theorem '{requested}' was not found in the input file. Use its fully qualified name."
-  | _ => throw <| IO.userError s!"Ambiguous theorem '{requested}': {candidates.toList.map Name.toString}. Use its fully qualified name."
+  | [] =>
+    if candidates.any (ctx.env.isProjectionFn ·) then
+      throw projectionError
+    throw <| IO.userError s!"Theorem '{requested}' was not found in the input file. Use its fully qualified name."
+  | _ => throw <| IO.userError s!"Ambiguous theorem '{requested}': {nodes.toList.map Name.toString}. Use its fully qualified name."
 
 def nodeJson (ctx : Context) (name : Name) (inputFile : String) : CoreM (Json × Array Name) := do
   let some info := ctx.find? name | throwError "Missing declaration: {name}"
-  let statement := collect ctx name info.type
-  let proof := (info.value? (allowOpaque := true)).map (collect ctx name) |>.getD {}
+  let statement ← collect ctx name info.type
+  let proof ← match info.value? (allowOpaque := true) with
+    | some value => collect ctx name value
+    | none => pure {}
   let missing := statement.missing ++ proof.missing
   unless missing.isEmpty do throwError "Dependency declarations unavailable: {missing.toArray}"
   let moduleName := ctx.env.mainModule
-  let location ← findDeclarationRanges? name
-  let locationJson := match location with
-    | some r => json% { "line": $(r.range.pos.line), "column": $(r.range.pos.column),
-        "end_line": $(r.range.endPos.line), "end_column": $(r.range.endPos.column) }
-    | none => Json.null
+  let some location ← findDeclarationRanges? name
+    | throwError "Theorem {name} has no standalone source range"
+  let locationJson := json% { "line": $(location.range.pos.line), "column": $(location.range.pos.column),
+    "end_line": $(location.range.endPos.line), "end_column": $(location.range.endPos.column) }
   let typeText ← Meta.MetaM.toIO (do return (← Meta.ppExpr info.type).pretty)
     { fileName := inputFile, fileMap := default } { env := ctx.env }
     {} {}
   let hasDirectSorry := info.type.hasSorry ||
     ((info.value? (allowOpaque := true)).map Expr.hasSorry |>.getD false)
+  let axioms ← collectAxioms name
   let data := json% {
     "id": $(name.toString), "name": $((privateToUserName name).toString),
     "kind": "theorem",
     "module": $(moduleName.toString), "file": $(inputFile), "location": $(locationJson),
     "statement": $(typeText.1),
+    "axioms": $(axioms.map Name.toString),
     "direct_sorry": $(hasDirectSorry),
     "has_sorry": $(statement.sorryFound || proof.sorryFound),
     "statement_sorry": $(statement.sorryFound), "proof_sorry": $(proof.sorryFound),

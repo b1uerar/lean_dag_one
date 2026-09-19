@@ -154,6 +154,50 @@ class LeanTests(unittest.TestCase):
         self.assertTrue(nodes[graph["root"]]["statement_sorry"])
         self.assertTrue(nodes[graph["root"]]["proof_sorry"])
 
+    def test_projections_are_traversed_without_becoming_nodes(self):
+        for target in ("through_projection", "through_inherited_projection", "through_class_projection"):
+            with self.subTest(target=target):
+                graph, nodes = self.extract_case(f"Cases.{target}")
+                self.assertEqual(set(nodes), {graph["root"]})
+                self.assertTrue(nodes[graph["root"]]["sorry_free"])
+
+    def test_generated_constructor_theorems_are_traversed_without_becoming_nodes(self):
+        graph, nodes = self.extract_case("Cases.through_constructor_injectivity")
+        self.assertEqual(set(nodes), {graph["root"]})
+        self.assertTrue(nodes[graph["root"]]["sorry_free"])
+
+    def test_generated_constructor_theorem_cannot_be_selected_as_target(self):
+        with self.assertRaisesRegex(RuntimeError, "no standalone source range"):
+            self.extract_case("Cases.WrappedNat.mk.injEq")
+
+    def test_projection_dependencies_retain_unfinished_theorems(self):
+        for target in ("through_box_dependency", "through_projection_type"):
+            with self.subTest(target=target):
+                graph, nodes = self.extract_case(f"Cases.{target}")
+                self.assertEqual(set(nodes), {graph["root"], "Cases.missing"})
+                self.assertEqual(nodes[graph["root"]]["proof_dependencies"], ["Cases.missing"])
+                self.assertTrue(nodes[graph["root"]]["depends_on_sorry"])
+
+    def test_projection_preserves_hidden_sorry_and_axioms(self):
+        graph, nodes = self.extract_case("Cases.through_box_sorry")
+        self.assertEqual(set(nodes), {graph["root"]})
+        self.assertTrue(nodes[graph["root"]]["has_sorry"])
+        self.assertFalse(nodes[graph["root"]]["sorry_free"])
+        self.assertIn("sorryAx", nodes[graph["root"]]["axioms"])
+        graph, nodes = self.extract_case("Cases.through_box_axiom")
+        self.assertEqual(set(nodes), {graph["root"]})
+        self.assertIn("Cases.assumption", nodes[graph["root"]]["axioms"])
+
+    def test_projection_cannot_be_selected_as_target(self):
+        for target in ("Cases.Certificate.proof", "Certificate.proof", "extra"):
+            with self.subTest(target=target):
+                with self.assertRaisesRegex(RuntimeError, "automatically generated.*projection"):
+                    self.extract_case(target)
+
+    def test_projection_names_do_not_make_theorem_targets_ambiguous(self):
+        graph, _ = self.extract_case("proof")
+        self.assertEqual(graph["root"], "Cases.Named.proof")
+
     def test_bad_names_and_node_limit(self):
         for theorem, message in (("does_not_exist", "not found"), ("duplicate", "Ambiguous")):
             with self.subTest(theorem=theorem), self.assertRaisesRegex(RuntimeError, message):
