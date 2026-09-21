@@ -6,3 +6,4 @@ output/bitvec_ctz/*
 !output/bitvec_ctz/full.svg
 *.olean
 *.ilean
+failures/

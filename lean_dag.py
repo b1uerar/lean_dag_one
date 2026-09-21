@@ -9,6 +9,7 @@ from graphlib import CycleError, TopologicalSorter
 import html
 import json
 from pathlib import Path
+import runpy
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,9 @@ import tempfile
 import textwrap
 import webbrowser
 import xml.etree.ElementTree as ET
+
+
+FailureArchive = runpy.run_path(str(Path(__file__).with_name("failure_archive.py")))["FailureArchive"]
 
 
 ROOT = Path(__file__).resolve().parent
@@ -48,6 +52,14 @@ def find_project(source: Path) -> Path | None:
 
 def extract(source: Path, theorem: str, project: Path | None,
             timeout: int = 300, max_nodes: int = 10000) -> dict:
+    with FailureArchive(ROOT, "extract", {"input.lean": source},
+                        {"theorem": theorem, "project": project,
+                         "timeout": timeout, "max_nodes": max_nodes}) as archive:
+        return _extract(source, theorem, project, timeout, max_nodes, archive)
+
+
+def _extract(source: Path, theorem: str, project: Path | None,
+             timeout: int, max_nodes: int, archive: FailureArchive) -> dict:
     if not shutil.which("lean"):
         raise RuntimeError("Lean/elan is not on PATH. Install Lean 4.26.0 with elan first.")
     cwd = project or source.parent
@@ -62,8 +74,9 @@ def extract(source: Path, theorem: str, project: Path | None,
     version = run(prefix + lean + ["--version"], cwd, timeout)
     if not version.startswith("Lean (version 4.26.0,"):
         raise RuntimeError(f"Expected Lean 4.26.0, got: {version.strip()}")
-    with tempfile.TemporaryDirectory(prefix="lean-dag-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="lean-dag-") as tmp, archive:
         temp = Path(tmp)
+        archive.files.update({name: temp / name for name in ("setup.json", "raw.json")})
         setup_arg = "-"
         if project:
             print("Preparing imported modules with Lake...", file=sys.stderr)
@@ -298,23 +311,24 @@ def main(argv: list[str] | None = None) -> int:
                              "--no-sorry-only exports the full file-local graph")
     args = parser.parse_args(argv)
     try:
-        source = args.file.resolve()
-        if not source.is_file() or source.suffix != ".lean":
-            raise ValueError(f"Not a Lean source file: {source}")
-        project = args.project.resolve() if args.project else find_project(source)
-        if project and not any((project / n).is_file() for n in ("lakefile.toml", "lakefile.lean")):
-            raise ValueError(f"No lakefile found in {project}")
-        graph = finalize_graph(extract(source, args.theorem, project, args.timeout, args.max_nodes),
-                               sorry_only=args.sorry_only)
-        paths = write_outputs(graph, args.output_dir.resolve())
-        summary = graph["summary"]
-        print(f"{graph['root']}: {summary['nodes']} nodes, {summary['edges']} edges; "
-              f"{summary['contains_sorry']} contain sorry, {summary['depends_on_sorry']} depend on sorry.")
-        for path in paths:
-            print(path)
-        if args.open:
-            webbrowser.open(paths[-1].as_uri())
-        return 0
+        with FailureArchive(ROOT, "graph", {"input.lean": args.file}, vars(args)):
+            source = args.file.resolve()
+            if not source.is_file() or source.suffix != ".lean":
+                raise ValueError(f"Not a Lean source file: {source}")
+            project = args.project.resolve() if args.project else find_project(source)
+            if project and not any((project / n).is_file() for n in ("lakefile.toml", "lakefile.lean")):
+                raise ValueError(f"No lakefile found in {project}")
+            graph = finalize_graph(extract(source, args.theorem, project, args.timeout, args.max_nodes),
+                                   sorry_only=args.sorry_only)
+            paths = write_outputs(graph, args.output_dir.resolve())
+            summary = graph["summary"]
+            print(f"{graph['root']}: {summary['nodes']} nodes, {summary['edges']} edges; "
+                  f"{summary['contains_sorry']} contain sorry, {summary['depends_on_sorry']} depend on sorry.")
+            for path in paths:
+                print(path)
+            if args.open:
+                webbrowser.open(paths[-1].as_uri())
+            return 0
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(f"lean-dag: {error}", file=sys.stderr)
         return 1

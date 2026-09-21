@@ -1,10 +1,12 @@
 from pathlib import Path
 import json
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -12,6 +14,13 @@ import lean_dag as dag
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def setUpModule():
+    # Child CLI processes inherit the same archive setting.
+    environment = patch.dict(os.environ, {"LEAN_TOOL_FAILURE_ARCHIVE": "0"})
+    environment.start()
+    unittest.addModuleCleanup(environment.stop)
 
 
 class GraphTests(unittest.TestCase):
