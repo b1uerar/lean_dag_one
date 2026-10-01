@@ -64,7 +64,12 @@ unsafe def main (args : List String) : IO UInt32 := do
       let target ← resolveName env targetText
       let refuter ← if mode == "refute" then do
         let text ← IO.ofExcept <| request.getObjValAs? String "refuter"
-        resolveName env text
+        try resolveName env text
+        catch error =>
+          -- Accept the conventional short name in the target's namespace too.
+          let targetNamespace := (privateToUserName target).getPrefix
+          if targetNamespace.isAnonymous || !text.toName.getPrefix.isAnonymous then throw error
+          resolveName env (targetNamespace ++ text.toName).toString
         else pure target
       let (valid, _) ← (do
         let targetExpr ← Meta.mkConstWithFreshMVarLevels target
