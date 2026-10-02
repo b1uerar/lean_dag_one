@@ -59,7 +59,7 @@ class FailureArchive:
                 "files": saved, "copy_errors": copy_errors,
             }
             # TimeoutExpired may contain bytes even when text=True.
-            for field in ("cmd", "timeout", "stdout", "stderr"):
+            for field in ("cmd", "timeout", "exit_code", "timed_out", "stdout", "stderr"):
                 value = getattr(error, field, None)
                 if value is not None:
                     report[field] = value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value

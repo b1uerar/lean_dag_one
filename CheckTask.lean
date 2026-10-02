@@ -62,6 +62,7 @@ unsafe def main (args : List String) : IO UInt32 := do
     else if mode == "refute" || mode == "prove" then
       let targetText ← IO.ofExcept <| request.getObjValAs? String "target"
       let target ← resolveName env targetText
+      let checkKind := if mode == "refute" then "Refutation" else "Proof"
       let refuter ← if mode == "refute" then do
         let text ← IO.ofExcept <| request.getObjValAs? String "refuter"
         try resolveName env text
@@ -83,11 +84,11 @@ unsafe def main (args : List String) : IO UInt32 := do
         let axioms ← collectAxioms refuter
         for ax in axioms do
           unless #[``propext, ``Classical.choice, ``Quot.sound].contains ax do
-            throwError "Refutation uses untrusted axiom: {ax}"
+            throwError "{checkKind} uses untrusted axiom: {ax}"
         pure true : MetaM Bool).toIO
           { fileName := inputFile, fileMap := FileMap.ofString source }
           { env } {} {}
-      unless valid do throw <| IO.userError "Refutation validation failed"
+      unless valid do throw <| IO.userError s!"{checkKind} validation failed"
       IO.println "{\"success\":true}"
     else
       throw <| IO.userError "Unknown task check mode"
